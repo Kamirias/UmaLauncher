@@ -12,7 +12,7 @@ def start(use_direct_launch=True, threader=None):
     global _progress_dialog
     
     if use_direct_launch:
-        logger.info("Trying to launch umamusume directly")
+        logger.info("Trying to launch Uma Musume directly")
         
         def update_progress(status, progress=0, filepath=""):
             global _progress_dialog
@@ -56,6 +56,12 @@ def start(use_direct_launch=True, threader=None):
         if not launch_info:
             logger.warning("Failed to get launch info from DMM API, launching via DMM instead.")
             os.system("Start dmmgameplayer://play/GCL/umamusume/cl/win")
+            return
+        
+        if launch_info.get("area_restricted"):
+            logger.error("Game launch cancelled due to region restriction")
+            if threader:
+                threader.stop()
             return
         
         game_path = launch_info["game_path"]

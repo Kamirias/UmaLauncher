@@ -263,7 +263,21 @@ def get_launch_info(product_id="umamusume", game_type="GCL", update_callback=Non
         response_data = response.json()
         
         if response_data.get("result_code") != 100:
-            logger.error(f"Launch failed: {response_data.get('error')}")
+            error_msg = response_data.get("error", "Unknown error")
+            result_code = response_data.get("result_code")
+            
+            if result_code == 803 and error_msg == "area not allowed":
+                logger.error("DMM API returned area restriction error")
+                import util
+                util.show_error_box_no_report(
+                    "Area not allowed",
+                    "<b>Unable to launch game: Area not allowed</b><br><br>"
+                    "This error occurs when DMM blocks your IP address.<br><br>"
+                    "<b>Is your VPN working?</b><br>"
+                )
+                return {"area_restricted": True}
+            
+            logger.error(f"Launch failed: {error_msg} (code: {result_code})")
             return None
         
         game_file = Path(game["detail"]["path"])
