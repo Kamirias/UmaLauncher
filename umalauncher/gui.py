@@ -1598,3 +1598,59 @@ class UmaScenarioPresetDialog(UmaMainDialog):
     
     def cancel(self):
         self.close()
+
+
+class UmaUpdateProgressDialog(UmaMainWidget):
+    def init_ui(self, *args, **kwargs):
+        self.setWindowTitle("Updating Game")
+        self.setWindowFlag(qtc.Qt.WindowType.WindowStaysOnTopHint, True)
+        self.setFixedSize(400, 120)
+        
+        layout = qtw.QVBoxLayout()
+        self.setLayout(layout)
+        
+        self.status_label = qtw.QLabel("Checking for updates...")
+        self.status_label.setAlignment(qtc.Qt.AlignCenter)
+        layout.addWidget(self.status_label)
+        
+        self.progress_bar = qtw.QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        layout.addWidget(self.progress_bar)
+        
+        self.detail_label = qtw.QLabel("")
+        self.detail_label.setAlignment(qtc.Qt.AlignCenter)
+        self.detail_label.setWordWrap(True)
+        layout.addWidget(self.detail_label)
+        
+        self.setWindowFlag(qtc.Qt.WindowType.WindowMaximizeButtonHint, False)
+        self.setWindowFlag(qtc.Qt.WindowType.WindowMinimizeButtonHint, False)
+        
+        self.pending_updates = []
+        self.update_timer = qtc.QTimer(self)
+        self.update_timer.timeout.connect(self._process_updates)
+        self.update_timer.start(50)
+    
+    def _process_updates(self):
+        while self.pending_updates:
+            status, progress, detail = self.pending_updates.pop(0)
+            self._update_ui(status, progress, detail)
+    
+    def _update_ui(self, status, progress, detail):
+        if status == "checking":
+            self.status_label.setText("Verifying game files...")
+            self.progress_bar.setValue(int(progress * 100))
+            self.detail_label.setText("")
+        elif status == "downloading":
+            self.status_label.setText("Downloading update...")
+            self.progress_bar.setValue(int(progress * 100))
+            if detail:
+                filename = detail.split("/")[-1] if "/" in detail else detail
+                self.detail_label.setText(filename)
+        elif status == "complete":
+            self.status_label.setText("Update complete!")
+            self.progress_bar.setValue(100)
+            self.detail_label.setText("")
+    
+    def queue_update(self, status, progress=0, detail=""):
+        self.pending_updates.append((status, progress, detail))

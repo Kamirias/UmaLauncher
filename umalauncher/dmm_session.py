@@ -5,6 +5,8 @@ import json
 import os
 import random
 from pathlib import Path
+from urllib.parse import parse_qsl
+import concurrent.futures
 import requests
 import requests.cookies
 import urllib3
@@ -110,6 +112,18 @@ class DgpSession:
     def get_headers(self):
         return self.DGP5_HEADERS | {"actauth": self.get_access_token()}
 
+    def get_dgp(self, url, params=None, **kwargs):
+        logger.debug(f"GET {url} params={params}")
+        res = self.session.get(url, headers=self.get_headers(), params=params, **kwargs)
+        if res.headers.get("Content-Type") == "application/json":
+            logger.debug(f"Response: {res.text}")
+        return res
+
+    def get(self, url, params=None, **kwargs):
+        logger.debug(f"GET {url}")
+        res = self.session.get(url, headers=self.HEADERS, params=params, **kwargs)
+        return res
+
     def post_dgp(self, url, json_data=None, **kwargs):
         logger.debug(f"POST {url} json={json_data}")
         res = self.session.post(url, headers=self.get_headers(), json=json_data, **kwargs)
@@ -138,6 +152,70 @@ class DgpSession:
         logger.debug(f"Read dmmgame.cnf: {res}")
         return res
 
+    def set_config(self, config):
+        config_file = self.DGP5_DATA_PATH.joinpath("dmmgame.cnf")
+        with open(config_file, "w", encoding="utf-8") as f:
+            f.write(json.dumps(config, indent=4))
+
+    def download(self, sign, filelist_url, output):
+        sign_dict = dict(parse_qsl(sign.replace(";", "&")))
+        signed = {
+            "Policy": sign_dict["CloudFront-Policy"],
+            "Signature": sign_dict["CloudFront-Signature"],
+            "Key-Pair-Id": sign_dict["CloudFront-Key-Pair-Id"],
+        }
+        url = self.API_DGP.format(filelist_url)
+        data = self.get_dgp(url).json()
+
+        def download_save(file):
+            path = output.joinpath(file["local_path"][1:])
+            content = self.get(data["data"]["domain"] + "/" + file["path"], params=signed).content
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "wb") as f:
+                f.write(content)
+            return file["size"], file
+
+        def check_sum(file):
+            path = output.joinpath(file["local_path"][1:])
+            if not file["check_hash_flg"]:
+                return True, file
+            if file["force_delete_flg"]:
+                if path.exists():
+                    path.unlink()
+                return True, file
+            if not path.exists():
+                return False, file
+            try:
+                with open(path, "rb") as f:
+                    content = f.read()
+                return file["hash"] == hashlib.md5(content).hexdigest(), file
+            except Exception:
+                return False, file
+
+        check_count = 0
+        check_failed_list = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
+            tasks = [pool.submit(lambda x: check_sum(x), x) for x in data["data"]["file_list"]]
+            for task in concurrent.futures.as_completed(tasks):
+                res, file = task.result()
+                check_count += 1
+                if not res:
+                    check_failed_list.append(file)
+                yield check_count / len(data["data"]["file_list"]), file
+
+        yield 0, None
+
+        check_failed_list = sorted(check_failed_list, key=lambda x: x["size"], reverse=True)
+        download_max_size = sum([x["size"] for x in check_failed_list])
+        download_size = 0
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
+            tasks = [pool.submit(lambda x: download_save(x), x) for x in check_failed_list]
+            for task in concurrent.futures.as_completed(tasks):
+                size, file = task.result()
+                download_size += size
+                yield download_size / download_max_size, file
+
     def get_aes_key(self):
         with open(self.DGP5_DATA_PATH.joinpath("Local State"), "r", encoding="utf-8") as f:
             local_state = json.load(f)
@@ -162,7 +240,7 @@ class DgpSession:
         session.read()
         return session
 
-def get_launch_info(product_id="umamusume", game_type="GCL"):
+def get_launch_info(product_id="umamusume", game_type="GCL", update_callback=None):
     try:
         session = DgpSession.read_dgp()
         
@@ -199,6 +277,38 @@ def get_launch_info(product_id="umamusume", game_type="GCL"):
             drm_path.parent.mkdir(parents=True, exist_ok=True)
             with open(drm_path.absolute(), "w+") as f:
                 f.write(drm_auth_token)
+        
+        if response_data["data"]["latest_version"] != game["detail"]["version"]:
+            logger.info(f"Game update available: {game['detail']['version']} -> {response_data['data']['latest_version']}")
+            
+            if update_callback:
+                update_callback("downloading", 0)
+            
+            logger.info("Downloading game update...")
+            total_files = 0
+            downloaded_files = 0
+            
+            for progress, file in session.download(
+                response_data["data"]["sign"],
+                response_data["data"]["file_list_url"],
+                game_file
+            ):
+                if file is None:
+                    total_files = int(progress * 100)
+                    logger.info(f"Checking files: {total_files} files to verify")
+                    if update_callback:
+                        update_callback("checking", progress)
+                else:
+                    downloaded_files += 1
+                    if update_callback:
+                        update_callback("downloading", progress, file.get("local_path", ""))
+            
+            game["detail"]["version"] = response_data["data"]["latest_version"]
+            session.set_config(dgp_config)
+            logger.info("Game updated successfully")
+            
+            if update_callback:
+                update_callback("complete")
         
         return {
             "game_path": str(game_file),
