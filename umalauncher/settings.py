@@ -75,6 +75,12 @@ class DefaultSettings(se.NewSettings):
             'open_training_logs',
             se.SettingType.COMMANDBUTTON,
         ),
+        "direct_launch": se.Setting(
+            "Direct game launch",
+            "Launch the game directly without opening DMM Game Player.",
+            True,
+            se.SettingType.BOOL,
+        ),
         "autoclose_dmm": se.Setting(
             "Autoclose DMM Game Player",
             "Automatically close DMM Game Player when the game is launched.",

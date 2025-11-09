@@ -283,7 +283,7 @@ class ScreenStateHandler():
                         if 'IS_UL_GLOBAL' in os.environ or 'IS_JP_STEAM' in os.environ:
                             steam.start()
                         else:
-                            dmm.start()
+                            dmm.start(self.threader.settings["direct_launch"])
                 
                 if not self.game_closed:
                     continue
